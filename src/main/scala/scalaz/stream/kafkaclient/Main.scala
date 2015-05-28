@@ -7,22 +7,8 @@ import kafka.consumer._
 import kafka.message.MessageAndMetadata
 import kafka.serializer._
 import scodec.bits.ByteVector
-import java.util.concurrent.{Executors, ThreadFactory}
-import java.util.concurrent.atomic.AtomicInteger
-import scalaz._
 
 object KafkaClient {
-
-  class NamedThreadFactory(name: String, daemon: Boolean = true) extends ThreadFactory {
-    val default = Executors.defaultThreadFactory()
-    val counter = new AtomicInteger(1)
-    def newThread(r: Runnable) = {
-      val t = default.newThread(r)
-      t.setName(name + "-" + counter.getAndIncrement)
-      t.setDaemon(daemon)
-      t
-    }
-  }
 
   case class KeyedValue(key: Option[ByteVector], value: ByteVector) {
     def keyAsString = key.flatMap(_.decodeUtf8.right.toOption).getOrElse("")
