@@ -8,7 +8,7 @@ import kafka.serializer._
 import scodec.bits.ByteVector
 import java.util.concurrent.{Executors, ThreadFactory}
 import java.util.concurrent.atomic.AtomicInteger
-import scalaz.\/
+import scalaz._
 
 object KafkaClient {
 
@@ -34,7 +34,7 @@ object KafkaClient {
     def fromBytes(bytes: Array[Byte]): ByteVector = ByteVector(bytes)
   }
 
-  case class StreamConfig(nStream: Int = 1, queueSize: Int = 10, exHandler: Throwable \/ List[Unit] => Unit = println)
+  case class StreamConfig(nStream: Int = 1, queueSize: Int = 10, exHandler: Throwable => Unit = println)
 
 
   def createConsumer(zookeeper: List[String], gid: String): ConsumerConnector = {
@@ -57,14 +57,16 @@ object KafkaClient {
 
     def enqueue(s: KafkaStream[ByteVector, ByteVector]) = {
       val it = s.iterator
-      while (it.hasNext) {
-        val next = it.next
+      it.foreach{ next =>
         queue.enqueueOne(KeyedValue(Option(next.key()), next.message())).run
       }
     } 
     
     val t = Task.gatherUnordered(streams.map(s => Task.delay(enqueue(s))))
-    Task.fork(t)(ec).runAsync(exHandler)
+    Task.fork(t)(ec).runAsync{
+      case -\/(e) => exHandler(e)
+      case _ => ()
+    }
     queue.dequeue.onComplete(Process eval_ Task.delay{
           c.shutdown()
           ec.shutdown() 
