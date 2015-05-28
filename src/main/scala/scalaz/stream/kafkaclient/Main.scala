@@ -4,6 +4,7 @@ package kafkaclient
 import scalaz.concurrent.Task
 import java.util.Properties
 import kafka.consumer._
+import kafka.message.MessageAndMetadata
 import kafka.serializer._
 import scodec.bits.ByteVector
 import java.util.concurrent.{Executors, ThreadFactory}
@@ -27,14 +28,12 @@ object KafkaClient {
     def keyAsString = key.flatMap(_.decodeUtf8.right.toOption).getOrElse("")
     def valueAsString = value.decodeUtf8.right.getOrElse("")
 
-    override def toString = s"key: ${keyAsString} ${valueAsString}"
+    override def toString = s"key: ${keyAsString} value: ${valueAsString}"
   }
 
   object ByteVectorDecoder extends Decoder[ByteVector] {
     def fromBytes(bytes: Array[Byte]): ByteVector = ByteVector(bytes)
   }
-
-  case class StreamConfig(nStream: Int = 1, queueSize: Int = 10, exHandler: Throwable => Unit = println)
 
 
   def createConsumer(zookeeper: List[String], gid: String): ConsumerConnector = {
@@ -49,28 +48,17 @@ object KafkaClient {
     Consumer.create(c)
   }
 
-  def subscribe(c: ConsumerConnector, topic: String): StreamConfig => Process[Task, KeyedValue] = { case StreamConfig(count, queueSize, exHandler) =>
-    val ec = Executors.newFixedThreadPool(count, new NamedThreadFactory("KafkaClient"))
+  def subscribe(c: ConsumerConnector, topic: String): Process[Task, KeyedValue] = {
+    val streams = c.createMessageStreams(Map(topic -> 1), ByteVectorDecoder, ByteVectorDecoder)(topic)
 
-    val streams = c.createMessageStreams(Map(topic -> count), ByteVectorDecoder, ByteVectorDecoder)(topic)
-    val queue = async.mutable.Queue[KeyedValue](queueSize)
-
-    def enqueue(s: KafkaStream[ByteVector, ByteVector]) = {
-      val it = s.iterator
-      it.foreach{ next =>
-        queue.enqueueOne(KeyedValue(Option(next.key()), next.message())).run
-      }
+    def go(it: Iterator[MessageAndMetadata[ByteVector, ByteVector]]): Process0[KeyedValue] = {      
+      if (it.hasNext) {
+        val next = it.next()
+        Process.emit(KeyedValue(Option(next.key()), next.message())) ++ go(it)
+      } else Process.halt
     } 
     
-    val t = Task.gatherUnordered(streams.map(s => Task.delay(enqueue(s))))
-    Task.fork(t)(ec).runAsync{
-      case -\/(e) => exHandler(e)
-      case _ => ()
-    }
-    queue.dequeue.onComplete(Process eval_ Task.delay{
-          c.shutdown()
-          ec.shutdown() 
-    })    
+    go(streams.head.iterator) onComplete(Process eval_ Task.delay(c.shutdown()))
   }
 }
 
@@ -82,9 +70,9 @@ object Main {
     val topic = args(1)
 
     val c = createConsumer(zookeeper.split(",").toList, "meh")
-    val t = subscribe(c, topic)(StreamConfig())
+    val t = subscribe(c, topic)
 
-    t.map(println).run.run    
+    t.map(println).run.run
   }
 
 }
