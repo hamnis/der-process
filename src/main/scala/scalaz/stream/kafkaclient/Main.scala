@@ -4,11 +4,23 @@ package kafkaclient
 import scalaz.concurrent.Task
 import java.util.Properties
 import kafka.consumer._
-import kafka.message.MessageAndMetadata
 import kafka.serializer._
 import scodec.bits.ByteVector
+import java.util.concurrent.{Executors, ThreadFactory}
+import java.util.concurrent.atomic.AtomicInteger
 
 object KafkaClient {
+
+  class NamedThreadFactory(name: String, daemon: Boolean = true) extends ThreadFactory {
+    val default = Executors.defaultThreadFactory()
+    val counter = new AtomicInteger(1)
+    def newThread(r: Runnable) = {
+      val t = default.newThread(r)
+      t.setName(name + "-" + counter.getAndIncrement)
+      t.setDaemon(daemon)
+      t
+    }
+  }
 
   case class KeyedValue(key: Option[ByteVector], value: ByteVector) {
     def keyAsString = key.flatMap(_.decodeUtf8.right.toOption).getOrElse("")
@@ -22,7 +34,7 @@ object KafkaClient {
   }
 
 
-  def createConsumer(zookeeper: List[String], gid: String): ConsumerConnector = {
+  def createConsumer(zookeeper: List[String], gid: String): Task[ConsumerConnector] = {
     val p = new Properties()
     p.setProperty("zookeeper.connect", zookeeper.mkString(","))
     p.setProperty("group.id", gid)
@@ -31,34 +43,49 @@ object KafkaClient {
     p.setProperty("auto.commit.interval.ms", "1000")
     p.setProperty("auto.offset.reset", "smallest")
     val c = new ConsumerConfig(p)
-    Consumer.create(c)
+    Task{ Consumer.create(c) }
   }
 
-  def subscribe(c: ConsumerConnector, topic: String): Process[Task, KeyedValue] = {
-    val streams = c.createMessageStreams(Map(topic -> 1), ByteVectorDecoder, ByteVectorDecoder)(topic)
+  def subscribe(c: Task[ConsumerConnector], topic: String, nPartitions: Int = 1): Process[Task, KeyedValue] = {
+    val streams = c map ( consumer => consumer.createMessageStreams(Map(topic -> nPartitions), ByteVectorDecoder, ByteVectorDecoder)(topic))
 
-    def go(it: Iterator[MessageAndMetadata[ByteVector, ByteVector]]): Process0[KeyedValue] = {      
-      if (it.hasNext) {
+    val ec = Executors.newFixedThreadPool(nPartitions, new NamedThreadFactory("KafkaClient"))
+
+    val queue = async.boundedQueue[KeyedValue](10)
+
+    def task(s: KafkaStream[ByteVector, ByteVector]) : Task[Unit] = Task.fork(Task {
+      val it = s.iterator
+      while(it.hasNext) {
         val next = it.next()
-        Process.emit(KeyedValue(Option(next.key()), next.message())) ++ go(it)
-      } else Process.halt
-    } 
-    
-    go(streams.head.iterator) onComplete(Process eval_ Task.delay(c.shutdown()))
+        queue.enqueueOne(KeyedValue(Option(next.key()), next.message())).run
+      }
+    })(ec)
+
+    val p = Process.await( streams ) { strm =>
+      val all = strm.foldLeft(Process.empty[Task, KeyedValue]){case (p, s) => p merge Process.eval_(task(s))}
+      all merge queue.dequeue
+    }
+
+    p onComplete(Process eval_ c.map{ c =>
+      c.shutdown()
+      ec.shutdown()
+    })
   }
 }
 
 
 object Main {
   import KafkaClient._
+  import scala.util.Try
   def main(args: Array[String]) = {
     val zookeeper = args(0)
     val topic = args(1)
+    val groupId = Try{args(2)}.toOption.getOrElse("meh")
 
-    val c = createConsumer(zookeeper.split(",").toList, "meh")
-    val t = subscribe(c, topic)
-
-    t.map(println).run.run
+    val c = createConsumer(zookeeper.split(",").toList, groupId)
+    val t = subscribe(c, topic, 2)
+    val p = t.map(println)
+    p.run.run
   }
 
 }
