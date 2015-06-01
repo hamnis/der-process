@@ -1,6 +1,6 @@
 organization := "net.hamnaberg"
 
-name := "scalaz-stream-kafka"
+name := "der-process"
 
 scalaVersion := "2.11.6"
 
