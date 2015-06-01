@@ -1,40 +1,29 @@
-package scalaz.stream
 package kafkaclient
 
+import scalaz.stream._
 import scalaz.concurrent.Task
 import java.util.Properties
 import kafka.consumer._
 import kafka.serializer._
 import scodec.bits.ByteVector
-import java.util.concurrent.{Executors, ThreadFactory}
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.Executors
 
-object KafkaClient {
 
-  class NamedThreadFactory(name: String, daemon: Boolean = true) extends ThreadFactory {
-    val default = Executors.defaultThreadFactory()
-    val counter = new AtomicInteger(1)
-    def newThread(r: Runnable) = {
-      val t = default.newThread(r)
-      t.setName(name + "-" + counter.getAndIncrement)
-      t.setDaemon(daemon)
-      t
-    }
-  }
+case class KeyedValue(key: Option[ByteVector], value: ByteVector) {
+  def keyAsString = key.flatMap(_.decodeUtf8.right.toOption).getOrElse("")
+  def valueAsString = value.decodeUtf8.right.getOrElse("")
 
-  case class KeyedValue(key: Option[ByteVector], value: ByteVector) {
-    def keyAsString = key.flatMap(_.decodeUtf8.right.toOption).getOrElse("")
-    def valueAsString = value.decodeUtf8.right.getOrElse("")
+  override def toString = s"key: ${keyAsString} value: ${valueAsString}"
+}
 
-    override def toString = s"key: ${keyAsString} value: ${valueAsString}"
-  }
 
+object Kafka {
+  
   object ByteVectorDecoder extends Decoder[ByteVector] {
     def fromBytes(bytes: Array[Byte]): ByteVector = ByteVector(bytes)
   }
 
-
-  def createConsumer(zookeeper: List[String], gid: String): Task[ConsumerConnector] = {
+  def consumer(zookeeper: List[String], gid: String): Task[ConsumerConnector] = {
     val p = new Properties()
     p.setProperty("zookeeper.connect", zookeeper.mkString(","))
     p.setProperty("group.id", gid)
@@ -42,6 +31,10 @@ object KafkaClient {
     p.setProperty("zookeeper.sync.time.ms", "200")
     p.setProperty("auto.commit.interval.ms", "1000")
     p.setProperty("auto.offset.reset", "smallest")
+    consumer(p)
+  }
+
+  def consumer(p: Properties): Task[ConsumerConnector] = {
     val c = new ConsumerConfig(p)
     Task{ Consumer.create(c) }
   }
