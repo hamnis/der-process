@@ -62,8 +62,10 @@ object KafkaClient {
     })(ec)
 
     val p = Process.await( streams ) { strm =>
-      val all = strm.foldLeft(Process.empty[Task, KeyedValue]){case (p, s) => p merge Process.eval_(task(s))}
-      all merge queue.dequeue
+      val processes = strm.map(s => Process.eval_(task(s)))
+      val all = Process.emitAll(processes)
+      val p = merge.mergeN(all)
+      p merge queue.dequeue
     }
 
     p onComplete(Process eval_ c.map{ c =>
