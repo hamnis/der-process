@@ -1,7 +1,8 @@
 package kafkaclient
 
 import scalaz.stream._
-import scalaz.concurrent.Task
+import scalaz.concurrent.{Strategy, Task}
+import scalaz.syntax.std.boolean._
 import java.util.Properties
 import kafka.consumer._
 import kafka.serializer._
@@ -13,7 +14,7 @@ case class KeyedValue(key: Option[ByteVector], value: ByteVector) {
   def keyAsString = key.flatMap(_.decodeUtf8.right.toOption).getOrElse("")
   def valueAsString = value.decodeUtf8.right.getOrElse("")
 
-  override def toString = s"key: ${keyAsString} value: ${valueAsString}"
+  override def toString = s"key: $keyAsString value: $valueAsString"
 }
 
 
@@ -23,7 +24,7 @@ object Kafka {
     def fromBytes(bytes: Array[Byte]): ByteVector = ByteVector(bytes)
   }
 
-  def consumer(zookeeper: List[String], gid: String): Task[ConsumerConnector] = {
+  def consumer(zookeeper: List[String], gid: String): ConsumerConnector = {
     val p = new Properties()
     p.setProperty("zookeeper.connect", zookeeper.mkString(","))
     p.setProperty("group.id", gid)
@@ -34,36 +35,38 @@ object Kafka {
     consumer(p)
   }
 
-  def consumer(p: Properties): Task[ConsumerConnector] = {
+  def consumer(p: Properties): ConsumerConnector = {
     val c = new ConsumerConfig(p)
-    Task{ Consumer.create(c) }
+    Consumer.create(c)
   }
 
-  def subscribe(c: Task[ConsumerConnector], topic: String, nPartitions: Int = 1): Process[Task, KeyedValue] = {
-    val streams = c map ( consumer => consumer.createMessageStreams(Map(topic -> nPartitions), ByteVectorDecoder, ByteVectorDecoder)(topic))
+  def subscribe(conn: ConsumerConnector, topic: String, nPartitions: Int = 1): Process[Task, KeyedValue] = {
+    val streams = conn.createMessageStreams(
+      Map(topic -> nPartitions),
+      ByteVectorDecoder,
+      ByteVectorDecoder
+    )(topic)
 
     val ec = Executors.newFixedThreadPool(nPartitions, new NamedThreadFactory("KafkaClient"))
 
-    val queue = async.boundedQueue[KeyedValue](10)
+    val strat = Strategy.Executor(ec)
 
-    def task(s: KafkaStream[ByteVector, ByteVector]) : Task[Unit] = Task.fork(Task {
-      val it = s.iterator
-      while(it.hasNext) {
-        val next = it.next()
-        queue.enqueueOne(KeyedValue(Option(next.key()), next.message())).run
+    val procs: List[Process[Task, KeyedValue]] = streams.map { i =>
+      Process.unfold(i.iterator) { k =>
+        k.hasNext.option {
+          val next = k.next
+          KeyedValue(Option(next.key()), next.message()) -> k
+        }
       }
-    })(ec)
-
-    val p = Process.await( streams ) { strm =>
-      val processes = strm.map(s => Process.eval_(task(s)))
-      val all = Process.emitAll(processes)
-      val p = merge.mergeN(all)
-      p merge queue.dequeue
     }
 
-    p onComplete(Process eval_ c.map{ c =>
-      c.shutdown()
-      ec.shutdown()
-    })
+    val merged = merge.mergeN(Process.emitAll(procs))(strat)
+
+    merged.onComplete {
+      Process.eval_(Task {
+        conn.shutdown()
+        ec.shutdown()
+      })
+    }
   }
 }
