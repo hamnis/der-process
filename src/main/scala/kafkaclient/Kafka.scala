@@ -1,5 +1,7 @@
 package kafkaclient
 
+import kafka.producer.{KeyedMessage, Producer, ProducerConfig}
+
 import scalaz.stream._
 import scalaz.concurrent.{Strategy, Task}
 import scalaz.syntax.std.boolean._
@@ -22,6 +24,10 @@ object Kafka {
   
   object ByteVectorDecoder extends Decoder[ByteVector] {
     def fromBytes(bytes: Array[Byte]): ByteVector = ByteVector(bytes)
+  }
+
+  object ByteVectorEncoder extends Encoder[ByteVector] {
+    def toBytes(t: ByteVector): Array[Byte] = t.toArray
   }
 
   def consumer(zookeeper: List[String], gid: String): ConsumerConnector = {
@@ -67,6 +73,27 @@ object Kafka {
         conn.shutdown()
         ec.shutdown()
       })
+    }
+  }
+
+  def producer(brokers: List[String]): Producer[ByteVector, ByteVector] = {
+    val props = new Properties()
+    props.setProperty("metadata.broker.list", brokers.mkString(","))
+    props.put("serializer.class", "kafkaclient.Kafka.ByteVectorEncoder")
+    producer(props)
+  }
+
+  def producer(p: Properties): Producer[ByteVector, ByteVector] = {
+    val prod = new ProducerConfig(p)
+    new Producer[ByteVector, ByteVector](prod)
+  }
+
+  def publish(producer: Producer[ByteVector, ByteVector], topic: String): Sink[Task, KeyedValue] = {
+    sink.lift[Task, KeyedValue] { kv =>
+      Task {
+        val msg = new KeyedMessage(topic, kv.key.orNull, kv.value)
+        producer.send(msg)
+      }
     }
   }
 }
