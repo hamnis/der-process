@@ -46,7 +46,7 @@ object Kafka {
     Consumer.create(c)
   }
 
-  def subscribe(conn: ConsumerConnector, topic: String, nPartitions: Int = 1): Process[Task, KeyedValue] = {
+  def subscribe(conn: ConsumerConnector, topic: String, nPartitions: Int = 1, maxQueueSize: Option[Int] = None): Process[Task, KeyedValue] = {
     val streams = conn.createMessageStreams(
       Map(topic -> nPartitions),
       ByteVectorDecoder,
@@ -66,7 +66,7 @@ object Kafka {
       }
     }
 
-    val merged = merge.mergeN(Process.emitAll(procs))(strat)
+    val merged = merge.mergeN(maxQueueSize.getOrElse(0))(Process.emitAll(procs))(strat)
 
     merged.onComplete {
       Process.eval_(Task {
