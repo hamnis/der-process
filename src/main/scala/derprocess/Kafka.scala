@@ -5,7 +5,8 @@ import java.util
 import scala.collection.JavaConverters._
 import fs2._
 import org.apache.kafka.clients.consumer.{ConsumerConfig, ConsumerRecord, KafkaConsumer}
-import org.apache.kafka.common.serialization.Deserializer
+import org.apache.kafka.clients.producer._
+import org.apache.kafka.common.serialization.{Deserializer, Serializer}
 
 final case class Broker(host: String, port: Int = 9092)
 
@@ -19,7 +20,7 @@ object Broker {
   }
 }
 
-final case class KafkaConfig(brokers: List[Broker], groupId: String, sessionTimeoutMs: Option[Long] = None, maxPollRecords: Option[Int] = None) {
+final case class KafkaConsumerConfig(brokers: List[Broker], groupId: String, sessionTimeoutMs: Option[Long] = None, maxPollRecords: Option[Int] = None) {
   def properties: java.util.Properties = {
     import ConsumerConfig._
 
@@ -32,10 +33,21 @@ final case class KafkaConfig(brokers: List[Broker], groupId: String, sessionTime
   }
 }
 
+final case class KafkaProducerConfig(brokers: List[Broker], lingerTimeoutMs: Option[Long] = None) {
+  def properties: java.util.Properties = {
+    import ProducerConfig._
+
+    val props = new java.util.Properties()
+    props.put(BOOTSTRAP_SERVERS_CONFIG, brokers.map(b => s"${b.host}:${b.port}").mkString(","))
+    lingerTimeoutMs.foreach(l => props.put(LINGER_MS_CONFIG, l.toString))
+    props
+  }
+}
+
 final case class KeyedValue[A, B](key: Option[A], value: B)
 
 object Kafka {
-  def subscribe[A: Deserializer, B: Deserializer](config: KafkaConfig, topic: String, timeout: Long): Stream[Task, KeyedValue[A, B]] = {
+  def subscribe[A: Deserializer, B: Deserializer](config: KafkaConsumerConfig, topic: String, timeout: Long): Stream[Task, KeyedValue[A, B]] = {
     subscribe(config.properties, topic, timeout)
   }
 
@@ -56,4 +68,32 @@ object Kafka {
       }).flatMap(Stream.emits)
     }, c => Task.delay(c.close()))
   }
+
+  def sink[A >: AnyRef : Serializer, B: Serializer](config: java.util.Properties, topic: String)(implicit strategy: Strategy): Sink[Task, KeyedValue[A, B]] = {
+    stream => {
+      val client = Task.delay{
+        new KafkaProducer[A, B](config, implicitly[Serializer[A]], implicitly[Serializer[B]])
+      }
+
+      def send(p: KafkaProducer[A, B], topic: String, kv: KeyedValue[A, B])(implicit strategy: Strategy): Task[Unit] = {
+        Task.async(either => p.send(new ProducerRecord[A, B](topic, kv.key.orNull, kv.value), new Callback {
+          override def onCompletion(metadata: RecordMetadata, exception: Exception) = {
+            if (exception != null) either(Left(exception)) else either(Right(()))
+          }
+        }))
+      }
+
+
+      def go(): Stream[Task, Unit] = {
+        val prod = Stream.bracket(client)(
+          p => stream.evalMap(kv => send(p, topic, kv)),
+          p => Task.delay(p.close())
+        )
+        prod.onError(_ => go())
+      }
+      go()
+    }
+
+  }
+
 }

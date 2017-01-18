@@ -10,7 +10,7 @@ object Main {
     val topic = args(1)
     val groupId = Try{args(2)}.toOption.getOrElse("meh")
 
-    val config = KafkaConfig(
+    val config = KafkaConsumerConfig(
       bootstrapServers.split(",").toList.flatMap(s => Broker(s).toList),
       groupId
     )
