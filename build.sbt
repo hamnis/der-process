@@ -2,10 +2,10 @@ organization := "net.hamnaberg"
 
 name := "der-process"
 
-scalaVersion := "2.11.6"
+crossScalaVersions := List("2.12.1","2.11.8")
 
-resolvers += "Scalaz Bintray Repo" at "https://dl.bintray.com/scalaz/releases"
+scalaVersion := crossScalaVersions.value.head
 
-libraryDependencies += "org.scalaz.stream" %% "scalaz-stream" % "0.7.1a"
+libraryDependencies += "co.fs2" %% "fs2-core" % "0.9.2"
 
-libraryDependencies += "org.apache.kafka" %% "kafka" % "0.8.2.1"
+libraryDependencies += "org.apache.kafka" % "kafka-clients" % "0.10.1.1"
