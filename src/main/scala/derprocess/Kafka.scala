@@ -69,6 +69,10 @@ object Kafka {
     }, c => Task.delay(c.close()))
   }
 
+  def sink[A >: AnyRef : Serializer, B: Serializer](config: KafkaProducerConfig, topic: String)(implicit strategy: Strategy): Sink[Task, KeyedValue[A, B]] = {
+    sink(config.properties, topic)
+  }
+
   def sink[A >: AnyRef : Serializer, B: Serializer](config: java.util.Properties, topic: String)(implicit strategy: Strategy): Sink[Task, KeyedValue[A, B]] = {
     stream => {
       val client = Task.delay{
