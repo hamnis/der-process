@@ -1,7 +1,5 @@
 package derprocess
 
-import java.util
-
 import scala.collection.JavaConverters._
 import fs2._
 import fs2.util.Async
@@ -19,7 +17,7 @@ object Kafka {
 
     val client = F.delay{
       val client = new KafkaConsumer[A, B](config, implicitly[Deserializer[A]], implicitly[Deserializer[B]])
-      client.subscribe(util.Arrays.asList(topic))
+      client.subscribe(java.util.Arrays.asList(topic))
       client
     }
 
