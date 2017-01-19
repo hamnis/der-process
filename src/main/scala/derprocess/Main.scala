@@ -1,6 +1,7 @@
 package derprocess
 
 import Implicits._
+import fs2._
 
 import scala.util.Try
 
@@ -10,14 +11,19 @@ object Main {
     val topic = args(1)
     val groupId = Try{args(2)}.toOption.getOrElse("meh")
 
+    val brokers = bootstrapServers.split(",").toList.flatMap(s => Broker(s).toList)
     val config = KafkaConsumerConfig(
-      bootstrapServers.split(",").toList.flatMap(s => Broker(s).toList),
+      brokers,
       groupId
     )
 
-    val c = Kafka.subscribe[String, String](config, topic, 5000)
+    implicit val strategy: Strategy = Strategy.fromFixedDaemonPool(4)
 
-    val p = c.map(println)
+    val c = Kafka.subscribe[String, String](config.properties, topic, 5000L)
+
+    val sink = Kafka.sink[String, String](KafkaProducerConfig(brokers).properties, topic + "1")
+
+    val p = c.flatMap(e => sink(Stream.emit(e)).map(md => e -> md)).map(println)
     p.run.unsafeRun()
   }
 }
