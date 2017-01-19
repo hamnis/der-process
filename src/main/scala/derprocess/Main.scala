@@ -19,9 +19,9 @@ object Main {
 
     implicit val strategy: Strategy = Strategy.fromFixedDaemonPool(4)
 
-    val c = Kafka.subscribe[String, String](config.properties, topic, 5000L)
+    val c = Kafka.subscribe[Task, String, String](config.properties, topic, 5000L)
 
-    val sink = Kafka.sink[String, String](KafkaProducerConfig(brokers).properties, topic + "1")
+    val sink = Kafka.sink[Task, String, String](KafkaProducerConfig(brokers).properties, topic + "1")
 
     val p = c.flatMap(e => sink(Stream.emit(e)).map(md => e -> md)).map(println)
     p.run.unsafeRun()
