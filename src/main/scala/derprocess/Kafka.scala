@@ -19,7 +19,7 @@ object Kafka {
       client
     }
 
-        Stream.bracket(client)(c => {
+    Stream.bracket(client)(c => {
       Stream.repeatEval(F.delay{
         val records = c.poll(timeout)
         records.records(topic).iterator().asScala.toList
