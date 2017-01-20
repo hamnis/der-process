@@ -17,25 +17,25 @@ object Broker {
 }
 
 final case class KafkaConsumerConfig(brokers: List[Broker], groupId: String, sessionTimeoutMs: Option[Long] = None, maxPollRecords: Option[Int] = None) {
-  def properties: java.util.Properties = {
+  def asMap: Map[String, AnyRef] = {
     import ConsumerConfig._
 
-    val props = new java.util.Properties()
-    props.put(BOOTSTRAP_SERVERS_CONFIG, brokers.map(b => s"${b.host}:${b.port}").mkString(","))
-    props.put(GROUP_ID_CONFIG, groupId)
-    sessionTimeoutMs.foreach(l => props.put(SESSION_TIMEOUT_MS_CONFIG, l.toString))
-    maxPollRecords.foreach(v => props.put(MAX_POLL_RECORDS_CONFIG, v.toString))
-    props
+    val props = Map[String, AnyRef](
+      (BOOTSTRAP_SERVERS_CONFIG, brokers.map(b => s"${b.host}:${b.port}").mkString(",")),
+      (GROUP_ID_CONFIG, groupId)
+    )
+
+    props ++ (sessionTimeoutMs.map(l => (SESSION_TIMEOUT_MS_CONFIG, l.toString)).toList ::: maxPollRecords.map(v => (MAX_POLL_RECORDS_CONFIG, v.toString)).toList)
   }
 }
 
 final case class KafkaProducerConfig(brokers: List[Broker], lingerTimeoutMs: Option[Long] = None) {
-  def properties: java.util.Properties = {
+  def asMap: Map[String, AnyRef] = {
     import ProducerConfig._
 
-    val props = new java.util.Properties()
-    props.put(BOOTSTRAP_SERVERS_CONFIG, brokers.map(b => s"${b.host}:${b.port}").mkString(","))
-    lingerTimeoutMs.foreach(l => props.put(LINGER_MS_CONFIG, l.toString))
-    props
+    val m = Map[String, AnyRef](
+      (BOOTSTRAP_SERVERS_CONFIG, brokers.map(b => s"${b.host}:${b.port}").mkString(","))
+    )
+    m ++ lingerTimeoutMs.map(l => (LINGER_MS_CONFIG, l.toString)).toList
   }
 }
