@@ -5,16 +5,15 @@ import fs2._
 import fs2.util.Async
 import org.apache.kafka.clients.consumer.{ConsumerRecord, KafkaConsumer}
 import org.apache.kafka.clients.producer._
-import org.apache.kafka.common.serialization.{Deserializer, Serializer}
 
 import scala.language.higherKinds
 
 object Kafka {
-  def subscribe[F[_]: Async, A : Deserializer, B: Deserializer](config: java.util.Properties, topic: String, timeout: Long): Stream[F, ConsumerRecord[A, B]] = {
+  def subscribe[F[_]: Async, A : KDeserializer, B: KDeserializer](config: Map[String, AnyRef], topic: String, timeout: Long): Stream[F, ConsumerRecord[A, B]] = {
     val F = Async[F]
 
     val client = F.delay{
-      val client = new KafkaConsumer[A, B](config, implicitly[Deserializer[A]], implicitly[Deserializer[B]])
+      val client = new KafkaConsumer[A, B](config.asJava, KDeserializer[A].key(config), KDeserializer[B].value(config))
       client.subscribe(java.util.Arrays.asList(topic))
       client
     }
@@ -27,12 +26,12 @@ object Kafka {
     }, c => F.delay(c.close()))
   }
 
-  def sink[F[_]: Async, A, B](config: java.util.Properties, topic: String)(implicit aSerializer: Serializer[A], bSerialiser: Serializer[B]): Pipe[F, ConsumerRecord[A, B], RecordMetadata] = {
+  def sink[F[_]: Async, A : KSerializer, B : KSerializer](config: Map[String, AnyRef], topic: String): Pipe[F, ConsumerRecord[A, B], RecordMetadata] = {
     stream => {
       val F = Async[F]
 
       val client = F.delay {
-        new KafkaProducer[A, B](config, aSerializer, bSerialiser)
+        new KafkaProducer[A, B](config.asJava, KSerializer[A].key(config), KSerializer[B].value(config))
       }
 
       def send(p: KafkaProducer[A, B], topic: String, kv: ConsumerRecord[A, B]): F[RecordMetadata] = {
