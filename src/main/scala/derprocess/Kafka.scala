@@ -36,10 +36,10 @@ object Kafka {
       }
 
       def send(p: KafkaProducer[A, B], topic: String, kv: ConsumerRecord[A, B]): F[RecordMetadata] = {
-        F.async(either => {
+        F.async(onComplete => {
           p.send(new ProducerRecord[A, B](topic, kv.key(), kv.value()), new Callback {
             override def onCompletion(metadata: RecordMetadata, exception: Exception) = {
-              if (exception != null) either(Left(exception)) else either(Right(metadata))
+              if (exception != null) onComplete(Left(exception)) else onComplete(Right(metadata))
             }
           })
           F.pure(())
